@@ -99,6 +99,7 @@ class ContributionFlow extends React.Component {
     step: PropTypes.string,
     redirect: PropTypes.string,
     verb: PropTypes.string,
+    error: PropTypes.string,
     contributeAs: PropTypes.string,
     defaultEmail: PropTypes.string,
     defaultName: PropTypes.string,
@@ -202,8 +203,13 @@ class ContributionFlow extends React.Component {
     if (!response) {
       this.setState({ isSubmitting: false, error: message });
     } else if (response.paymentIntent) {
+      const isAlipay = response.paymentIntent.allowed_source_types[0] === 'alipay';
       const stripe = await getStripe(null, account);
-      const result = await stripe.handleCardAction(response.paymentIntent.client_secret);
+      const result = isAlipay
+        ? await stripe.confirmAlipayPayment(response.paymentIntent.client_secret, {
+            return_url: `${window.location.origin}/api/services/stripe/alipay/callback?OrderId=${order.id}`,
+          })
+        : await stripe.handleCardAction(response.paymentIntent.client_secret);
       if (result.error) {
         this.setState({ isSubmitting: false, error: result.error.message });
       } else if (result.paymentIntent && result.paymentIntent.status === 'requires_confirmation') {
@@ -277,8 +283,12 @@ class ContributionFlow extends React.Component {
         'paypalInfo.orderId',
         'paypalInfo.subscriptionId',
       ]);
-    } else if (stepPayment.paymentMethod.type === GQLV2_PAYMENT_METHOD_TYPES.BANK_TRANSFER) {
-      return pick(stepPayment.paymentMethod, ['type']);
+    } else if (
+      [GQLV2_PAYMENT_METHOD_TYPES.BANK_TRANSFER, GQLV2_PAYMENT_METHOD_TYPES.ALIPAY].includes(
+        stepPayment.paymentMethod.type,
+      )
+    ) {
+      return pick(stepPayment.paymentMethod, ['type', 'service']);
     }
   };
 
@@ -564,7 +574,16 @@ class ContributionFlow extends React.Component {
   };
 
   render() {
-    const { collective, host, tier, LoggedInUser, loadingLoggedInUser, skipStepDetails, isEmbed } = this.props;
+    const {
+      collective,
+      host,
+      tier,
+      LoggedInUser,
+      loadingLoggedInUser,
+      skipStepDetails,
+      isEmbed,
+      error: backendError,
+    } = this.props;
     const { error, isSubmitted, isSubmitting, stepDetails, stepSummary, stepProfile, stepPayment } = this.state;
     const currency = tier?.amount.currency || collective.currency;
 
@@ -640,11 +659,12 @@ class ContributionFlow extends React.Component {
               >
                 <Box />
                 <Box as="form" ref={this.formRef} onSubmit={e => e.preventDefault()} maxWidth="100%">
-                  {error && (
-                    <MessageBox type="error" withIcon mb={3}>
-                      {formatErrorMessage(this.props.intl, error)}
-                    </MessageBox>
-                  )}
+                  {error ||
+                    (backendError && (
+                      <MessageBox type="error" withIcon mb={3}>
+                        {formatErrorMessage(this.props.intl, error) || backendError}
+                      </MessageBox>
+                    ))}
 
                   <ContributionFlowStepContainer
                     collective={collective}
